@@ -1,5 +1,83 @@
 #include "systemcalls.h"
 
+#include <errno.h>
+#include <fcntl.h>
+#include <stdlib.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
+static bool execute_command(char *const command[], const char *outputfile)
+{
+    int output_fd = -1;
+    int status;
+    pid_t child_pid;
+    pid_t wait_result;
+    bool close_succeeded = true;
+
+    if (command == NULL || command[0] == NULL) {
+        return false;
+    }
+
+    if (outputfile != NULL) {
+        output_fd = open(outputfile, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        if (output_fd == -1) {
+            return false;
+        }
+    }
+
+    child_pid = fork();
+    if (child_pid == -1) {
+        if (output_fd != -1) {
+            close(output_fd);
+        }
+        return false;
+    }
+
+    if (child_pid == 0) {
+        if (output_fd != -1 && output_fd != STDOUT_FILENO) {
+            if (dup2(output_fd, STDOUT_FILENO) == -1) {
+                _exit(EXIT_FAILURE);
+            }
+            close(output_fd);
+        }
+
+        execv(command[0], command);
+        _exit(EXIT_FAILURE);
+    }
+
+    if (output_fd != -1 && close(output_fd) == -1) {
+        close_succeeded = false;
+    }
+
+    do {
+        wait_result = waitpid(child_pid, &status, 0);
+    } while (wait_result == -1 && errno == EINTR);
+
+    return close_succeeded && wait_result == child_pid &&
+           WIFEXITED(status) && WEXITSTATUS(status) == EXIT_SUCCESS;
+}
+
+static char **build_command(int count, va_list args)
+{
+    char **command;
+    int index;
+
+    if (count < 1) {
+        return NULL;
+    }
+
+    command = calloc((size_t)count + 1U, sizeof(*command));
+    if (command == NULL) {
+        return NULL;
+    }
+
+    for (index = 0; index < count; index++) {
+        command[index] = va_arg(args, char *);
+    }
+
+    return command;
+}
+
 /**
  * @param cmd the command to execute with system()
  * @return true if the command in @param cmd was executed
@@ -9,15 +87,15 @@
 */
 bool do_system(const char *cmd)
 {
+    int status;
 
-/*
- * TODO  add your code here
- *  Call the system() function with the command set in the cmd
- *   and return a boolean true if the system() call completed with success
- *   or false() if it returned a failure
-*/
+    if (cmd == NULL) {
+        return false;
+    }
 
-    return true;
+    status = system(cmd);
+    return status != -1 && WIFEXITED(status) &&
+           WEXITSTATUS(status) == EXIT_SUCCESS;
 }
 
 /**
@@ -37,31 +115,20 @@ bool do_system(const char *cmd)
 bool do_exec(int count, ...)
 {
     va_list args;
+    char **command;
+    bool succeeded;
+
     va_start(args, count);
-    char * command[count+1];
-    int i;
-    for(i=0; i<count; i++)
-    {
-        command[i] = va_arg(args, char *);
-    }
-    command[count] = NULL;
-    // this line is to avoid a compile warning before your implementation is complete
-    // and may be removed
-    command[count] = command[count];
-
-/*
- * TODO:
- *   Execute a system command by calling fork, execv(),
- *   and wait instead of system (see LSP page 161).
- *   Use the command[0] as the full path to the command to execute
- *   (first argument to execv), and use the remaining arguments
- *   as second argument to the execv() command.
- *
-*/
-
+    command = build_command(count, args);
     va_end(args);
 
-    return true;
+    if (command == NULL) {
+        return false;
+    }
+
+    succeeded = execute_command(command, NULL);
+    free(command);
+    return succeeded;
 }
 
 /**
@@ -72,28 +139,22 @@ bool do_exec(int count, ...)
 bool do_exec_redirect(const char *outputfile, int count, ...)
 {
     va_list args;
-    va_start(args, count);
-    char * command[count+1];
-    int i;
-    for(i=0; i<count; i++)
-    {
-        command[i] = va_arg(args, char *);
+    char **command;
+    bool succeeded;
+
+    if (outputfile == NULL) {
+        return false;
     }
-    command[count] = NULL;
-    // this line is to avoid a compile warning before your implementation is complete
-    // and may be removed
-    command[count] = command[count];
 
-
-/*
- * TODO
- *   Call execv, but first using https://stackoverflow.com/a/13784315/1446624 as a refernce,
- *   redirect standard out to a file specified by outputfile.
- *   The rest of the behaviour is same as do_exec()
- *
-*/
-
+    va_start(args, count);
+    command = build_command(count, args);
     va_end(args);
 
-    return true;
+    if (command == NULL) {
+        return false;
+    }
+
+    succeeded = execute_command(command, outputfile);
+    free(command);
+    return succeeded;
 }
