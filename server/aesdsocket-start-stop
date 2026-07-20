@@ -1,0 +1,40 @@
+#!/bin/sh
+
+DAEMON="aesdsocket"
+DAEMON_PATH="/usr/bin/$DAEMON"
+PIDFILE="/var/run/$DAEMON.pid"
+
+start() {
+    echo "Starting $DAEMON"
+    start-stop-daemon --start --background --make-pidfile \
+        --pidfile "$PIDFILE" --exec "$DAEMON_PATH" -- -d
+}
+
+stop() {
+    echo "Stopping $DAEMON"
+    start-stop-daemon --stop --signal TERM --pidfile "$PIDFILE" --exec "$DAEMON_PATH"
+
+    # Wait for the daemon to exit cleanly before removing the pidfile.
+    while start-stop-daemon --stop --test --quiet --pidfile "$PIDFILE" --exec "$DAEMON_PATH"; do
+        sleep 0.1
+    done
+
+    rm -f "$PIDFILE"
+}
+
+case "$1" in
+    start)
+        start
+        ;;
+    stop)
+        stop
+        ;;
+    restart)
+        stop
+        start
+        ;;
+    *)
+        echo "Usage: $0 {start|stop|restart}"
+        exit 1
+        ;;
+esac
